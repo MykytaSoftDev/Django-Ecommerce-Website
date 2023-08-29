@@ -1,52 +1,28 @@
+from django.views.decorators.csrf import csrf_exempt
 from django.shortcuts import render
 from django.http import JsonResponse
 from .models import *
+from .utils import get_cart_data, guest_order
 import json
 import datetime
-# Create your views here.
 
 
 def store(request):
-    if request.user.is_authenticated:
-        customer = request.user.customer
-        order, created = Order.objects.get_or_create(
-            customer=customer, complete=False)
-        items = order.orderitem_set.all()
-        cart_items = order.get_cart_items
-    else:
-        items = []
-        order = {'get_cart_total': 0, 'get_cart_items': 0, 'shipping':False}
-        cart_items = order['get_cart_items']
-
+    data = get_cart_data(request)
     products = Product.objects.all()
-    contex = {'products': products, 'cart_items': cart_items}
-    return render(request, 'store/store.html', contex)
+    context = {'products': products, 'cart_items': data['cart_items']}
+    return render(request, 'store/store.html', context)
 
 
 def cart(request):
-    context = get_data(request)
+    context = get_cart_data(request)
     return render(request, 'store/cart.html', context)
 
 
 def checkout(request):
-    context = get_data(request)
+    context = get_cart_data(request)
     return render(request, 'store/checkout.html', context)
 
-
-def get_data(request):
-    if request.user.is_authenticated:
-        customer = request.user.customer
-        order, created = Order.objects.get_or_create(
-            customer=customer, complete=False)
-        items = order.orderitem_set.all()
-        cart_items = order.get_cart_items
-    else:
-        items = []
-        order = {'get_cart_total': 0, 'get_cart_items': 0}
-        cart_items = order['get_cart_items']
-
-    context = {'items': items, 'order': order, 'cart_items': cart_items}
-    return context
 
 def update_item(request):
     data = json.loads(request.body)
@@ -76,6 +52,7 @@ def update_item(request):
     return JsonResponse('Item was added', safe=False)
 
 
+# @csrf_exempt
 def process_order(request):
     transaction_id = datetime.datetime.now().timestamp()
     data = json.loads(request.body)
@@ -83,23 +60,25 @@ def process_order(request):
     if request.user.is_authenticated:
         customer = request.user.customer
         order, created = Order.objects.get_or_create(
-        customer=customer, complete=False)
-        total = data['form']['total']
-        order.transaction_id = transaction_id
-
-        if total == order.get_cart_total:
-            order.complete = True
-        order.save()
-
-        if order.shipping == True:
-            ShippingAddress.objects.create(
-                customer=customer,
-                order=order,
-                address=data['shipping']['address'],
-                city=data['shipping']['city'],
-                state=data['shipping']['state'],
-                zipcode=data['shipping']['zipcode'],
-            )
+            customer=customer, complete=False)
     else:
-        print('User is not logged in...')
+        customer, order = guest_order(request, data=data)
+
+    total = float(data['form']['total'])
+    order.transaction_id = transaction_id
+
+    if total == float(order.get_cart_total):
+        order.complete = True
+    order.save()
+
+    if order.shipping == True:
+        ShippingAddress.objects.create(
+            customer=customer,
+            order=order,
+            address=data['shipping']['address'],
+            city=data['shipping']['city'],
+            state=data['shipping']['state'],
+            zipcode=data['shipping']['zipcode'],
+            date_added=datetime.datetime.now(),
+        )
     return JsonResponse('Payment complete!...', safe=False)
